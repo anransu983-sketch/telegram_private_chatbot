@@ -1685,7 +1685,9 @@ async function saveAdLog(env, msg, score, reasons, text) {
 async function blockIfAd(msg, env) {
   const userId = msg.chat.id;
   const text = getPlainText(msg);
-  const { score, reasons } = calcAdScore(msg);
+  const result = calcAdScore(msg);
+  const score = result.score;
+  const reasons = result.reasons || [];
 
   const threshold = parseInt(env.AD_SCORE_THRESHOLD || "4", 10);
 
@@ -1719,7 +1721,7 @@ async function blockIfAd(msg, env) {
   const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
   const name = (firstName + " " + lastName).trim() || "无";
   const profile = typeof getProfileText === "function" ? getProfileText(msg) || "无" : "无";
-  const reasonText = reasons && reasons.length ? reasons.join("、") : "未知";
+  const reasonText = reasons.length ? reasons.join("、") : "未知";
   const contentText = (text || "[非文本消息]").slice(0, 800);
 
   const notifyText = [
@@ -1754,7 +1756,31 @@ async function blockIfAd(msg, env) {
   return true;
 }
 
+async function handleAdLogsCommand(env, threadId) {
+  const list = await env.TOPIC_MAP.list({
+    prefix: "adlog:",
+    limit: 100
+  });
+
+  const keys = list.keys
+    .map(function(k) {
+      return k.name;
+    })
+    .sort()
+    .reverse()
+    .slice(0, 10);
+
+  if (keys.length === 0) {
+    await tgCall(env, "sendMessage", {
+      chat_id: env.SUPERGROUP_ID,
+      message_thread_id: threadId,
+      text: "暂无广告拦截记录。"
+    });
+    return;
+  }
+
   const logs = [];
+
   for (const key of keys) {
     const raw = await env.TOPIC_MAP.get(key);
     if (!raw) continue;
@@ -1766,32 +1792,41 @@ async function blockIfAd(msg, env) {
     }
   }
 
-  const text = logs.map((log, index) => {
-    return `#${index + 1}
-时间: ${log.time}
-UID: ${log.userId}
-用户名: ${log.username}
-昵称: ${log.name}
-广告分: ${log.score}
-原因: ${(log.reasons || []).join("、") || "未知"}
-内容: ${(log.text || "").slice(0, 120)}`;
+  if (logs.length === 0) {
+    await tgCall(env, "sendMessage", {
+      chat_id: env.SUPERGROUP_ID,
+      message_thread_id: threadId,
+      text: "暂无可读取的广告拦截记录。"
+    });
+    return;
+  }
+
+  const logText = logs.map(function(log, index) {
+    return [
+      "#" + (index + 1),
+      "时间: " + (log.time || "未知"),
+      "UID: " + (log.userId || "未知"),
+      "用户名: " + (log.username || "无"),
+      "昵称: " + (log.name || "无"),
+      "广告分: " + (log.score || 0),
+      "原因: " + ((log.reasons || []).join("、") || "未知"),
+      "内容: " + ((log.text || "").slice(0, 120))
+    ].join("\n");
   }).join("\n\n");
 
   await tgCall(env, "sendMessage", {
     chat_id: env.SUPERGROUP_ID,
     message_thread_id: threadId,
-    text: `📒 最近广告拦截记录\n\n${text.slice(0, 3500)}`
+    text: ("📒 最近广告拦截记录\n\n" + logText).slice(0, 3500)
   });
 }
+  
 
+ 
+    
 
   
     
 
 
 
-banned:${userId}`
-  });
-
-  return true;
-}
