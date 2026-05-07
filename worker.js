@@ -1534,7 +1534,24 @@ async function delaySend(env, key, ts) {
         await env.TOPIC_MAP.delete(key);
     }
 }
-// ---------------- 自动广告识别模块 ----------------
+// ---------------- 进阶模块：快捷回复 + 高风险用户名 + 广告日志 ----------------
+
+const QUICK_REPLIES = {
+  "/r1": "你好，我看到了，请稍等。",
+  "/r2": "请把问题、截图、链接一次性发完整，我看到后会回复。",
+  "/r3": "广告、推广、群发、博彩、贷款、USDT 等内容不接，会直接拉黑。",
+  "/r4": "收到，我晚点回复你。",
+  "/r5": "请直接说明你的需求、预算、时间要求和联系方式。"
+};
+
+function normalizeCommandText(text) {
+  return (text || "").trim().split(/\s+/)[0].split("@")[0];
+}
+
+function getQuickReply(text) {
+  const cmd = normalizeCommandText(text);
+  return QUICK_REPLIES[cmd] || null;
+}
 
 const AD_RULES = [
   // 链接、频道、用户名
@@ -1545,14 +1562,26 @@ const AD_RULES = [
   { re: /(飞机号|飞机|频道|群发|跑量|协议号|引流|获客|私域|询盘|自动过验证|过验证|自动化|脚本|机器人|推广|广告)/i, score: 2, reason: "引流广告词" },
 
   // 灰产/诈骗/交易词
-  { re: /(USDT|担保|博彩|菠菜|贷款|返佣|返利|洗钱|代付|跑分|盘口|开户注册|开户注册|充值|提现)/i, score: 2, reason: "灰产交易词" },
+  { re: /(USDT|担保|博彩|菠菜|贷款|返佣|返利|洗钱|代付|跑分|盘口|开户|充值|提现|虚拟币|交易所)/i, score: 2, reason: "灰产交易词" },
 
   // 营销话术
-  { re: /(加我|联系我|私聊|合作|接单|项目|稳赚|日入|包过|精准客户|大量客户|资源对接|渠道合作)/i, score: 1, reason: "营销话术" },
+  { re: /(加我|联系我|私聊|合作|接单|项目|稳赚|日入|包过|精准客户|大量客户|资源对接|渠道合作)/i, score: 1, reason: "营销话术" }
+];
+
+const RISKY_PROFILE_RULES = [
+  { re: /(ad|ads|promo|promote|marketing|traffic|lead|leads|seo|deal|seller|shop|usdt|crypto|casino|bet|loan|airdrop)/i, score: 2, reason: "用户名含英文营销/灰产词" },
+  { re: /(推广|广告|引流|获客|流量|飞机|博彩|贷款|返佣|客服|官方|频道|营销|私域)/i, score: 2, reason: "昵称/用户名含高风险词" },
+  { re: /(888|999|666|000|520|1314)/i, score: 1, reason: "用户名疑似营销号数字" }
 ];
 
 function getPlainText(msg) {
   return [msg.text, msg.caption].filter(Boolean).join("\n").trim();
+}
+
+function getProfileText(msg) {
+  const username = msg.from?.username ? `@${msg.from.username}` : "";
+  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim();
+  return `${username} ${name}`.trim();
 }
 
 function messageHasUrlEntity(msg) {
@@ -1566,6 +1595,23 @@ function messageHasUrlEntity(msg) {
     e.type === "text_link" ||
     e.type === "mention"
   );
+}
+
+function scoreRiskyProfile(msg) {
+  const profile = getProfileText(msg);
+  let score = 0;
+  const reasons = [];
+
+  if (!profile) return { score, reasons };
+
+  for (const rule of RISKY_PROFILE_RULES) {
+    if (rule.re.test(profile)) {
+      score += rule.score;
+      reasons.push(rule.reason);
+    }
+  }
+
+  return { score, reasons: [...new Set(reasons)] };
 }
 
 function calcAdScore(msg) {
@@ -1585,14 +1631,16 @@ function calcAdScore(msg) {
     }
   }
 
-  // 多个 @ 基本很像广告
+  const profileRisk = scoreRiskyProfile(msg);
+  score += profileRisk.score;
+  reasons.push(...profileRisk.reasons);
+
   const atCount = (text.match(/@/g) || []).length;
   if (atCount >= 2) {
     score += 1;
     reasons.push("多个@");
   }
 
-  // 长文本同时出现推广类词
   if (
     text.length > 80 &&
     /(联系|合作|推广|流量|渠道|变现|询盘|客户|开户|充值)/i.test(text)
@@ -1601,7 +1649,6 @@ function calcAdScore(msg) {
     reasons.push("长营销文本");
   }
 
-  // 连续多行短句，很像群发广告模板
   const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
   if (lines.length >= 4 && /(频道|飞机|联系|合作|群发|推广|自动)/i.test(text)) {
     score += 1;
@@ -1609,6 +1656,30 @@ function calcAdScore(msg) {
   }
 
   return { score, reasons: [...new Set(reasons)] };
+}
+
+async function saveAdLog(env, msg, score, reasons, text) {
+  const userId = msg.chat.id;
+  const username = msg.from?.username ? `@${msg.from.username}` : "无";
+  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "无";
+  const profile = getProfileText(msg) || "无";
+
+  const log = {
+    time: new Date().toISOString(),
+    userId,
+    username,
+    name,
+    profile,
+    score,
+    reasons,
+    text: (text || "[非文本消息]").slice(0, 1000)
+  };
+
+  await env.TOPIC_MAP.put(
+    `adlog:${Date.now()}:${userId}`,
+    JSON.stringify(log),
+    { expirationTtl: 60 * 60 * 24 * 30 }
+  );
 }
 
 async function blockIfAd(msg, env) {
@@ -1622,9 +1693,11 @@ async function blockIfAd(msg, env) {
   if (score < threshold) return false;
 
   await env.TOPIC_MAP.put(`banned:${userId}`, "1");
+  await saveAdLog(env, msg, score, reasons, text);
 
   const username = msg.from?.username ? `@${msg.from.username}` : "无";
   const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "无";
+  const profile = getProfileText(msg) || "无";
 
   await tgCall(env, "sendMessage", {
     chat_id: env.SUPERGROUP_ID,
@@ -1634,13 +1707,78 @@ async function blockIfAd(msg, env) {
 UID: ${userId}
 用户名: ${username}
 昵称: ${name}
+资料特征: ${profile}
 广告分: ${score}
 命中原因: ${reasons.join("、") || "未知"}
 
 内容：
 ${(text || "[非文本消息]").slice(0, 800)}
 
-如误封，请到 Cloudflare KV 删除：
+如误封，请在用户话题发 /unban
+若没有话题，请到 Cloudflare KV 删除：
+banned:${userId}`
+  });
+
+  return true;
+}
+
+async function handleAdLogsCommand(env, threadId) {
+  const list = await env.TOPIC_MAP.list({
+    prefix: "adlog:",
+    limit: 100
+  });
+
+  const keys = list.keys
+    .map(k => k.name)
+    .sort()
+    .reverse()
+    .slice(0, 10);
+
+  if (keys.length === 0) {
+    await tgCall(env, "sendMessage", {
+      chat_id: env.SUPERGROUP_ID,
+      message_thread_id: threadId,
+      text: "暂无广告拦截记录。"
+    });
+    return;
+  }
+
+  const logs = [];
+  for (const key of keys) {
+    const raw = await env.TOPIC_MAP.get(key);
+    if (!raw) continue;
+
+    try {
+      logs.push(JSON.parse(raw));
+    } catch (e) {
+      // 忽略坏记录
+    }
+  }
+
+  const text = logs.map((log, index) => {
+    return `#${index + 1}
+时间: ${log.time}
+UID: ${log.userId}
+用户名: ${log.username}
+昵称: ${log.name}
+广告分: ${log.score}
+原因: ${(log.reasons || []).join("、") || "未知"}
+内容: ${(log.text || "").slice(0, 120)}`;
+  }).join("\n\n");
+
+  await tgCall(env, "sendMessage", {
+    chat_id: env.SUPERGROUP_ID,
+    message_thread_id: threadId,
+    text: `📒 最近广告拦截记录\n\n${text.slice(0, 3500)}`
+  });
+}
+
+
+  
+    
+
+
+
 banned:${userId}`
   });
 
