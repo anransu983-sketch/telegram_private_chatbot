@@ -1687,13 +1687,12 @@ async function blockIfAd(msg, env) {
   const text = getPlainText(msg);
   const { score, reasons } = calcAdScore(msg);
 
-  // 默认 4 分封禁；想更严格改成 3，怕误杀改成 5
   const threshold = parseInt(env.AD_SCORE_THRESHOLD || "4", 10);
 
   if (score < threshold) return false;
 
   // 1. 自动封禁
-  await env.TOPIC_MAP.put(`banned:${userId}`, "1");
+  await env.TOPIC_MAP.put("banned:" + userId, "1");
 
   // 2. 保存广告日志
   try {
@@ -1715,59 +1714,45 @@ async function blockIfAd(msg, env) {
   }
 
   // 4. 通知管理群
-  const username = msg.from?.username ? `@${msg.from.username}` : "无";
-  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "无";
+  const username = msg.from && msg.from.username ? "@" + msg.from.username : "无";
+  const firstName = msg.from && msg.from.first_name ? msg.from.first_name : "";
+  const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
+  const name = (firstName + " " + lastName).trim() || "无";
   const profile = typeof getProfileText === "function" ? getProfileText(msg) || "无" : "无";
+  const reasonText = reasons && reasons.length ? reasons.join("、") : "未知";
+  const contentText = (text || "[非文本消息]").slice(0, 800);
+
+  const notifyText = [
+    "🚫 自动封禁疑似广告用户",
+    "",
+    "UID: " + userId,
+    "用户名: " + username,
+    "昵称: " + name,
+    "资料特征: " + profile,
+    "广告分: " + score,
+    "命中原因: " + reasonText,
+    "",
+    "已执行：",
+    "✅ 自动封禁",
+    "✅ 自动删除私聊广告消息",
+    "✅ 已记录广告日志",
+    "",
+    "内容：",
+    contentText,
+    "",
+    "如误封：",
+    "1. 如果有用户话题，在话题里发 /unban",
+    "2. 如果没有话题，去 Cloudflare KV 删除：",
+    "banned:" + userId
+  ].join("\n");
 
   await tgCall(env, "sendMessage", {
     chat_id: env.SUPERGROUP_ID,
-    text:
-`🚫 自动封禁疑似广告用户
-
-UID: ${userId}
-用户名: ${username}
-昵称: ${name}
-资料特征: ${profile}
-广告分: ${score}
-命中原因: ${reasons.join("、") || "未知"}
-
-已执行：
-✅ 自动封禁
-✅ 自动删除私聊广告消息
-✅ 已记录广告日志
-
-内容：
-${(text || "[非文本消息]").slice(0, 800)}
-
-如误封：
-1. 如果有用户话题，在话题里发 /unban
-2. 如果没有话题，去 Cloudflare KV 删除：
-banned:${userId}`
+    text: notifyText
   });
 
   return true;
 }
-
-async function handleAdLogsCommand(env, threadId) {
-  const list = await env.TOPIC_MAP.list({
-    prefix: "adlog:",
-    limit: 100
-  });
-
-  const keys = list.keys
-    .map(k => k.name)
-    .sort()
-    .reverse()
-    .slice(0, 10);
-
-  if (keys.length === 0) {
-    await tgCall(env, "sendMessage", {
-      chat_id: env.SUPERGROUP_ID,
-      message_thread_id: threadId,
-      text: "暂无广告拦截记录。"
-    });
-    return;
-  }
 
   const logs = [];
   for (const key of keys) {
