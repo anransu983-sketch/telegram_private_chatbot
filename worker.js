@@ -490,7 +490,7 @@ async function handlePrivateMessage(msg, env, ctx) {
     await sendVerificationChallenge(userId, env, pendingMsgId);
     return;
   }
-
+if (verified !== "trusted" && await blockIfAd(msg, env)) return;
   await forwardToTopic(msg, userId, key, env, ctx);
 }
 
@@ -1533,4 +1533,116 @@ async function delaySend(env, key, ts) {
 
         await env.TOPIC_MAP.delete(key);
     }
+}
+// ---------------- 自动广告识别模块 ----------------
+
+const AD_RULES = [
+  // 链接、频道、用户名
+  { re: /(t\.me|telegram\.me|http:\/\/|https:\/\/|www\.)/i, score: 2, reason: "链接" },
+  { re: /@[a-zA-Z0-9_]{5,}/, score: 2, reason: "用户名/频道" },
+
+  // 高危广告词
+  { re: /(飞机号|飞机|频道|群发|跑量|协议号|引流|获客|私域|询盘|自动过验证|过验证|自动化|脚本|机器人|推广|广告)/i, score: 2, reason: "引流广告词" },
+
+  // 灰产/诈骗/交易词
+  { re: /(USDT|担保|博彩|菠菜|贷款|返佣|返利|洗钱|代付|跑分|盘口|开户注册|开户注册|充值|提现)/i, score: 2, reason: "灰产交易词" },
+
+  // 营销话术
+  { re: /(加我|联系我|私聊|合作|接单|项目|稳赚|日入|包过|精准客户|大量客户|资源对接|渠道合作)/i, score: 1, reason: "营销话术" },
+];
+
+function getPlainText(msg) {
+  return [msg.text, msg.caption].filter(Boolean).join("\n").trim();
+}
+
+function messageHasUrlEntity(msg) {
+  const entities = [
+    ...(msg.entities || []),
+    ...(msg.caption_entities || []),
+  ];
+
+  return entities.some(e =>
+    e.type === "url" ||
+    e.type === "text_link" ||
+    e.type === "mention"
+  );
+}
+
+function calcAdScore(msg) {
+  const text = getPlainText(msg);
+  let score = 0;
+  const reasons = [];
+
+  if (messageHasUrlEntity(msg)) {
+    score += 2;
+    reasons.push("消息实体含链接/提及");
+  }
+
+  for (const rule of AD_RULES) {
+    if (rule.re.test(text)) {
+      score += rule.score;
+      reasons.push(rule.reason);
+    }
+  }
+
+  // 多个 @ 基本很像广告
+  const atCount = (text.match(/@/g) || []).length;
+  if (atCount >= 2) {
+    score += 1;
+    reasons.push("多个@");
+  }
+
+  // 长文本同时出现推广类词
+  if (
+    text.length > 80 &&
+    /(联系|合作|推广|流量|渠道|变现|询盘|客户|开户|充值)/i.test(text)
+  ) {
+    score += 1;
+    reasons.push("长营销文本");
+  }
+
+  // 连续多行短句，很像群发广告模板
+  const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  if (lines.length >= 4 && /(频道|飞机|联系|合作|群发|推广|自动)/i.test(text)) {
+    score += 1;
+    reasons.push("疑似群发格式");
+  }
+
+  return { score, reasons: [...new Set(reasons)] };
+}
+
+async function blockIfAd(msg, env) {
+  const userId = msg.chat.id;
+  const text = getPlainText(msg);
+  const { score, reasons } = calcAdScore(msg);
+
+  // 默认 4 分封禁；想更严格改成 3，怕误杀改成 5
+  const threshold = parseInt(env.AD_SCORE_THRESHOLD || "4", 10);
+
+  if (score < threshold) return false;
+
+  await env.TOPIC_MAP.put(`banned:${userId}`, "1");
+
+  const username = msg.from?.username ? `@${msg.from.username}` : "无";
+  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "无";
+
+  await tgCall(env, "sendMessage", {
+    chat_id: env.SUPERGROUP_ID,
+    text:
+`🚫 自动屏蔽疑似广告
+
+UID: ${userId}
+用户名: ${username}
+昵称: ${name}
+广告分: ${score}
+命中原因: ${reasons.join("、") || "未知"}
+
+内容：
+${(text || "[非文本消息]").slice(0, 800)}
+
+如误封，请到 Cloudflare KV 删除：
+banned:${userId}`
+  });
+
+  return true;
 }
