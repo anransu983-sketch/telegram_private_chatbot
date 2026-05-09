@@ -1864,7 +1864,28 @@ async function blockIfAd(msg, env, verified) {
   return true;
 }
   
-  
+  async function handleAdLogsCommand(env, threadId) {
+  const list = await env.TOPIC_MAP.list({
+    prefix: "adlog:",
+    limit: 100
+  });
+
+  const keys = list.keys
+    .map(function(k) {
+      return k.name;
+    })
+    .sort()
+    .reverse()
+    .slice(0, 10);
+
+  if (keys.length === 0) {
+    await tgCall(env, "sendMessage", {
+      chat_id: env.SUPERGROUP_ID,
+      message_thread_id: threadId,
+      text: "暂无广告拦截记录。"
+    });
+    return;
+  }
   const logs = [];
 
   for (const key of keys) {
