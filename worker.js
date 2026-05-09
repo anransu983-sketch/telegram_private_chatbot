@@ -483,14 +483,14 @@ async function handlePrivateMessage(msg, env, ctx) {
   if (isBanned) return;
 
   const verified = await env.TOPIC_MAP.get(`verified:${userId}`);
-
+if (verified !== "trusted" && await blockIfAd(msg, env)) return;
   if (!verified) {
     const isStart = msg.text && msg.text.trim() === "/start";
     const pendingMsgId = isStart ? null : msg.message_id;
     await sendVerificationChallenge(userId, env, pendingMsgId);
     return;
   }
-if (verified !== "trusted" && await blockIfAd(msg, env)) return;
+
   await forwardToTopic(msg, userId, key, env, ctx);
 }
 
