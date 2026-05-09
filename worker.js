@@ -1705,38 +1705,24 @@ async function saveAdLog(env, msg, score, reasons, text) {
   );
 }
 
-async function blockIfAd(msg, env) {
+async function blockIfAd(msg, env, verified) {
   const userId = msg.chat.id;
   const text = getPlainText(msg);
   const result = calcAdScore(msg);
   const score = result.score;
   const reasons = result.reasons || [];
 
-  const threshold = parseInt(env.AD_SCORE_THRESHOLD || "3", 10);
+  const isVerified = !!verified;
 
-  if (score < threshold) return false;
+  // 未验证用户更严格，已验证用户稍微宽一点
+  const strictBlockThreshold = parseInt(env.AD_STRICT_BLOCK_THRESHOLD || "3", 10);
+  const normalBlockThreshold = parseInt(env.AD_BLOCK_THRESHOLD || "4", 10);
+  const suspiciousThreshold = parseInt(env.AD_SUSPICIOUS_THRESHOLD || "2", 10);
 
-  // 1. 自动封禁
-  await env.TOPIC_MAP.put("banned:" + userId, "1");
+  const blockThreshold = isVerified ? normalBlockThreshold : strictBlockThreshold;
 
-  // 2. 保存广告日志
-  try {
-    await saveAdLog(env, msg, score, reasons, text);
-  } catch (e) {
-    console.log("保存广告日志失败:", e);
-  }
+  if (score < suspiciousThreshold) return false;
 
-  // 3. 删除用户发给机器人的广告消息
-  try {
-    await tgCall(env, "deleteMessage", {
-      chat_id: msg.chat.id,
-      message_id: msg.message_id
-    });
-  } catch (e) {
-    console.log("删除私聊广告消息失败:", e);
-  }
-
-  // 4. 通知管理群
   const username = msg.from && msg.from.username ? "@" + msg.from.username : "无";
   const firstName = msg.from && msg.from.first_name ? msg.from.first_name : "";
   const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
@@ -1745,38 +1731,121 @@ async function blockIfAd(msg, env) {
   const reasonText = reasons.length ? reasons.join("、") : "未知";
   const contentText = (text || "[非文本消息]").slice(0, 800);
 
-  const notifyText = [
-    "🚫 自动封禁疑似广告用户",
+  // 先删除这条可疑/广告消息
+  try {
+    await tgCall(env, "deleteMessage", {
+      chat_id: msg.chat.id,
+      message_id: msg.message_id
+    });
+  } catch (e) {
+    console.log("删除可疑广告消息失败:", e);
+  }
+
+  // 写广告/风控日志
+  try {
+    await saveAdLog(env, msg, score, reasons, text);
+  } catch (e) {
+    console.log("保存广告日志失败:", e);
+  }
+
+  // 命中封禁阈值：自动封禁
+  if (score >= blockThreshold) {
+    await env.TOPIC_MAP.put("banned:" + userId, "1");
+
+    const notifyText = [
+      "🚫 自动封禁疑似广告用户",
+      "",
+      "模式: " + (isVerified ? "已验证用户普通检测" : "未验证用户严格检测"),
+      "UID: " + userId,
+      "用户名: " + username,
+      "昵称: " + name,
+      "资料特征: " + profile,
+      "广告分: " + score,
+      "封禁阈值: " + blockThreshold,
+      "命中原因: " + reasonText,
+      "",
+      "已执行：",
+      "✅ 自动封禁",
+      "✅ 自动删除私聊广告消息",
+      "✅ 已记录广告日志",
+      "",
+      "内容：",
+      contentText,
+      "",
+      "如误封：",
+      "1. 如果有用户话题，在话题里发 /unban",
+      "2. 如果没有话题，去 Cloudflare KV 删除：",
+      "banned:" + userId
+    ].join("\n");
+
+    await tgCall(env, "sendMessage", {
+      chat_id: env.SUPERGROUP_ID,
+      text: notifyText
+    });
+
+    return true;
+  }
+
+  // 可疑但不确定：不转发，要求重新说明/验证
+  const riskKey = "riskhold:" + userId;
+  await env.TOPIC_MAP.put(riskKey, String(Date.now()), {
+    expirationTtl: 60 * 60 * 24
+  });
+
+  const warningText = [
+    "⚠️ 系统检测到你的消息可能包含广告、推广、频道、链接、虚拟币、TRX 能量出租、博彩、贷款等内容。",
     "",
+    "这条消息不会转发给对方。",
+    "",
+    "如果你是真人，请重新发送一条正常咨询内容：",
+    "1. 不要带链接",
+    "2. 不要带频道或 @ 推广",
+    "3. 不要带 TRX / USDT / 能量出租 / 广告话术",
+    "4. 请用一句话说明真实来意",
+    "",
+    "再次触发广告规则可能会被自动封禁。"
+  ].join("\n");
+
+  try {
+    await tgCall(env, "sendMessage", {
+      chat_id: userId,
+      text: warningText
+    });
+  } catch (e) {
+    console.log("发送可疑提醒失败:", e);
+  }
+
+  const holdNotifyText = [
+    "⚠️ 可疑消息已拦截，暂未封禁",
+    "",
+    "模式: " + (isVerified ? "已验证用户普通检测" : "未验证用户严格检测"),
     "UID: " + userId,
     "用户名: " + username,
     "昵称: " + name,
     "资料特征: " + profile,
     "广告分: " + score,
+    "封禁阈值: " + blockThreshold,
     "命中原因: " + reasonText,
     "",
     "已执行：",
-    "✅ 自动封禁",
-    "✅ 自动删除私聊广告消息",
-    "✅ 已记录广告日志",
+    "✅ 删除私聊可疑消息",
+    "✅ 未转发到用户话题",
+    "✅ 已要求用户重新说明来意",
+    "✅ 已记录日志",
     "",
     "内容：",
-    contentText,
-    "",
-    "如误封：",
-    "1. 如果有用户话题，在话题里发 /unban",
-    "2. 如果没有话题，去 Cloudflare KV 删除：",
-    "banned:" + userId
+    contentText
   ].join("\n");
 
   await tgCall(env, "sendMessage", {
     chat_id: env.SUPERGROUP_ID,
-    text: notifyText
+    text: holdNotifyText
   });
 
   return true;
 }
-
+ 
+ 
 async function handleAdLogsCommand(env, threadId) {
   const list = await env.TOPIC_MAP.list({
     prefix: "adlog:",
