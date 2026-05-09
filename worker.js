@@ -1540,10 +1540,12 @@ async function delaySend(env, key, ts) {
 }
 // ---------------- 进阶模块：快捷回复 + 高风险用户名 + 广告日志 ----------------
 
+// ---------------- 进阶模块：快捷回复 + 高风险用户名 + 广告日志 + 自动删除广告 ----------------
+
 const QUICK_REPLIES = {
   "/r1": "你好，我看到了，请稍等。",
   "/r2": "请把问题、截图、链接一次性发完整，我看到后会回复。",
-  "/r3": "广告、推广、群发、博彩、贷款、USDT 等内容不接，会直接拉黑。",
+  "/r3": "广告、推广、群发、博彩、贷款、USDT、TRX 能量出租等内容不接，会直接拉黑。",
   "/r4": "收到，我晚点回复你。",
   "/r5": "请直接说明你的需求、预算、时间要求和联系方式。"
 };
@@ -1562,17 +1564,23 @@ const AD_RULES = [
   { re: /(t\.me|telegram\.me|http:\/\/|https:\/\/|www\.)/i, score: 2, reason: "链接" },
   { re: /@[a-zA-Z0-9_]{5,}/, score: 2, reason: "用户名/频道" },
 
-  // 高危广告词
+  // TRX / USDT / 能量出租广告
+  { re: /(TRX|USDT|ETH|BTC|波场|能量|带宽|转账能量|能量出租|TRX出租|租能量|能量租赁)/i, score: 3, reason: "虚拟币/能量广告" },
+  { re: /(钱包地址|收款地址|给你发|送你|送两笔|转两笔|测试转账|链上|交易哈希|hash)/i, score: 2, reason: "虚拟币交易话术" },
+  { re: /(老板|兄弟|支持一下|新开机器人|新开频道|新开项目|帮忙支持|赏脸支持)/i, score: 1, reason: "广告拉关系话术" },
+
+  // 引流广告词
   { re: /(飞机号|飞机|频道|群发|跑量|协议号|引流|获客|私域|询盘|自动过验证|过验证|自动化|脚本|机器人|推广|广告)/i, score: 2, reason: "引流广告词" },
 
   // 灰产/诈骗/交易词
-  { re: /(USDT|担保|博彩|菠菜|贷款|返佣|返利|洗钱|代付|跑分|盘口|开户|充值|提现|虚拟币|交易所)/i, score: 2, reason: "灰产交易词" },
+  { re: /(担保|博彩|菠菜|贷款|返佣|返利|洗钱|代付|跑分|盘口|开户|充值|提现|虚拟币|交易所)/i, score: 2, reason: "灰产交易词" },
 
   // 营销话术
   { re: /(加我|联系我|私聊|合作|接单|项目|稳赚|日入|包过|精准客户|大量客户|资源对接|渠道合作)/i, score: 1, reason: "营销话术" }
 ];
 
 const RISKY_PROFILE_RULES = [
+  { re: /(TRX|USDT|ETH|BTC|波场|能量|能量出租|TRX出租|租能量|钱包|链上|交易所)/i, score: 4, reason: "昵称/用户名含虚拟币广告词" },
   { re: /(ad|ads|promo|promote|marketing|traffic|lead|leads|seo|deal|seller|shop|usdt|crypto|casino|bet|loan|airdrop)/i, score: 2, reason: "用户名含英文营销/灰产词" },
   { re: /(推广|广告|引流|获客|流量|飞机|博彩|贷款|返佣|客服|官方|频道|营销|私域)/i, score: 2, reason: "昵称/用户名含高风险词" },
   { re: /(888|999|666|000|520|1314)/i, score: 1, reason: "用户名疑似营销号数字" }
@@ -1583,22 +1591,22 @@ function getPlainText(msg) {
 }
 
 function getProfileText(msg) {
-  const username = msg.from?.username ? `@${msg.from.username}` : "";
-  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim();
-  return `${username} ${name}`.trim();
+  const username = msg.from && msg.from.username ? "@" + msg.from.username : "";
+  const firstName = msg.from && msg.from.first_name ? msg.from.first_name : "";
+  const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
+  const name = (firstName + " " + lastName).trim();
+  return (username + " " + name).trim();
 }
 
 function messageHasUrlEntity(msg) {
   const entities = [
     ...(msg.entities || []),
-    ...(msg.caption_entities || []),
+    ...(msg.caption_entities || [])
   ];
 
-  return entities.some(e =>
-    e.type === "url" ||
-    e.type === "text_link" ||
-    e.type === "mention"
-  );
+  return entities.some(function(e) {
+    return e.type === "url" || e.type === "text_link" || e.type === "mention";
+  });
 }
 
 function scoreRiskyProfile(msg) {
@@ -1606,7 +1614,7 @@ function scoreRiskyProfile(msg) {
   let score = 0;
   const reasons = [];
 
-  if (!profile) return { score, reasons };
+  if (!profile) return { score: score, reasons: reasons };
 
   for (const rule of RISKY_PROFILE_RULES) {
     if (rule.re.test(profile)) {
@@ -1615,7 +1623,10 @@ function scoreRiskyProfile(msg) {
     }
   }
 
-  return { score, reasons: [...new Set(reasons)] };
+  return {
+    score: score,
+    reasons: Array.from(new Set(reasons))
+  };
 }
 
 function calcAdScore(msg) {
@@ -1647,40 +1658,48 @@ function calcAdScore(msg) {
 
   if (
     text.length > 80 &&
-    /(联系|合作|推广|流量|渠道|变现|询盘|客户|开户|充值)/i.test(text)
+    /(联系|合作|推广|流量|渠道|变现|询盘|客户|开户|充值|能量|TRX|USDT)/i.test(text)
   ) {
     score += 1;
     reasons.push("长营销文本");
   }
 
-  const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
-  if (lines.length >= 4 && /(频道|飞机|联系|合作|群发|推广|自动)/i.test(text)) {
+  const lines = text.split(/\n+/).map(function(s) {
+    return s.trim();
+  }).filter(Boolean);
+
+  if (lines.length >= 4 && /(频道|飞机|联系|合作|群发|推广|自动|能量|TRX|USDT)/i.test(text)) {
     score += 1;
     reasons.push("疑似群发格式");
   }
 
-  return { score, reasons: [...new Set(reasons)] };
+  return {
+    score: score,
+    reasons: Array.from(new Set(reasons))
+  };
 }
 
 async function saveAdLog(env, msg, score, reasons, text) {
   const userId = msg.chat.id;
-  const username = msg.from?.username ? `@${msg.from.username}` : "无";
-  const name = `${msg.from?.first_name || ""} ${msg.from?.last_name || ""}`.trim() || "无";
+  const username = msg.from && msg.from.username ? "@" + msg.from.username : "无";
+  const firstName = msg.from && msg.from.first_name ? msg.from.first_name : "";
+  const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
+  const name = (firstName + " " + lastName).trim() || "无";
   const profile = getProfileText(msg) || "无";
 
   const log = {
     time: new Date().toISOString(),
-    userId,
-    username,
-    name,
-    profile,
-    score,
-    reasons,
+    userId: userId,
+    username: username,
+    name: name,
+    profile: profile,
+    score: score,
+    reasons: reasons,
     text: (text || "[非文本消息]").slice(0, 1000)
   };
 
   await env.TOPIC_MAP.put(
-    `adlog:${Date.now()}:${userId}`,
+    "adlog:" + Date.now() + ":" + userId,
     JSON.stringify(log),
     { expirationTtl: 60 * 60 * 24 * 30 }
   );
@@ -1693,7 +1712,7 @@ async function blockIfAd(msg, env) {
   const score = result.score;
   const reasons = result.reasons || [];
 
-  const threshold = parseInt(env.AD_SCORE_THRESHOLD || "4", 10);
+  const threshold = parseInt(env.AD_SCORE_THRESHOLD || "3", 10);
 
   if (score < threshold) return false;
 
@@ -1702,9 +1721,7 @@ async function blockIfAd(msg, env) {
 
   // 2. 保存广告日志
   try {
-    if (typeof saveAdLog === "function") {
-      await saveAdLog(env, msg, score, reasons, text);
-    }
+    await saveAdLog(env, msg, score, reasons, text);
   } catch (e) {
     console.log("保存广告日志失败:", e);
   }
@@ -1724,7 +1741,7 @@ async function blockIfAd(msg, env) {
   const firstName = msg.from && msg.from.first_name ? msg.from.first_name : "";
   const lastName = msg.from && msg.from.last_name ? msg.from.last_name : "";
   const name = (firstName + " " + lastName).trim() || "无";
-  const profile = typeof getProfileText === "function" ? getProfileText(msg) || "无" : "无";
+  const profile = getProfileText(msg) || "无";
   const reasonText = reasons.length ? reasons.join("、") : "未知";
   const contentText = (text || "[非文本消息]").slice(0, 800);
 
@@ -1824,13 +1841,3 @@ async function handleAdLogsCommand(env, threadId) {
     text: ("📒 最近广告拦截记录\n\n" + logText).slice(0, 3500)
   });
 }
-  
-
- 
-    
-
-  
-    
-
-
-
