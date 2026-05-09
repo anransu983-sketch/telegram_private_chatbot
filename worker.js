@@ -717,7 +717,11 @@ async function handleAdminReply(msg, env, ctx) {
       ctx.waitUntil(handleCleanupCommand(threadId, env));
       return;
   }
-
+// 查看最近广告拦截记录
+if (normalizeCommandText(text) === "/adlogs") {
+  await handleAdLogsCommand(env, threadId);
+  return;
+}
   // 优先通过 thread 映射快速反查用户，缺失时再降级全量扫描
   let userId = null;
   const mappedUser = await env.TOPIC_MAP.get(`thread:${threadId}`);
