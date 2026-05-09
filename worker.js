@@ -1709,15 +1709,21 @@ async function blockIfAd(msg, env, verified) {
   const userId = msg.chat.id;
   const text = getPlainText(msg);
   const result = calcAdScore(msg);
-  const score = result.score;
+  const score = Number(result.score || 0);
   const reasons = result.reasons || [];
-
+// 保险：广告分为 0 或异常时，绝不拦截
+if (!Number.isFinite(score) || score <= 0) return false;
   const isVerified = !!verified;
 
   // 未验证用户更严格，已验证用户稍微宽一点
-  const strictBlockThreshold = parseInt(env.AD_STRICT_BLOCK_THRESHOLD || "3", 10);
-  const normalBlockThreshold = parseInt(env.AD_BLOCK_THRESHOLD || "4", 10);
-  const suspiciousThreshold = parseInt(env.AD_SUSPICIOUS_THRESHOLD || "2", 10);
+ function readThreshold(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const strictBlockThreshold = readThreshold(env.AD_STRICT_BLOCK_THRESHOLD, 3);
+const normalBlockThreshold = readThreshold(env.AD_BLOCK_THRESHOLD, 4);
+const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
 
   const blockThreshold = isVerified ? normalBlockThreshold : strictBlockThreshold;
 
