@@ -1711,22 +1711,25 @@ async function blockIfAd(msg, env, verified) {
   const result = calcAdScore(msg);
   const score = Number(result.score || 0);
   const reasons = result.reasons || [];
-// 保险：广告分为 0 或异常时，绝不拦截
-if (!Number.isFinite(score) || score <= 0) return false;
+
+  // 保险：广告分为 0 或异常时，绝不拦截
+  if (!Number.isFinite(score) || score <= 0) return false;
+
   const isVerified = !!verified;
 
-  // 未验证用户更严格，已验证用户稍微宽一点
- function readThreshold(value, fallback) {
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+  function readThreshold(value, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  }
 
-const strictBlockThreshold = readThreshold(env.AD_STRICT_BLOCK_THRESHOLD, 3);
-const normalBlockThreshold = readThreshold(env.AD_BLOCK_THRESHOLD, 4);
-const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
+  // 未验证用户更严格，已验证用户稍微宽一点
+  const strictBlockThreshold = readThreshold(env.AD_STRICT_BLOCK_THRESHOLD, 3);
+  const normalBlockThreshold = readThreshold(env.AD_BLOCK_THRESHOLD, 4);
+  const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
 
   const blockThreshold = isVerified ? normalBlockThreshold : strictBlockThreshold;
 
+  // 分数没到可疑线，正常放行
   if (score < suspiciousThreshold) return false;
 
   const username = msg.from && msg.from.username ? "@" + msg.from.username : "无";
@@ -1747,16 +1750,17 @@ const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
     console.log("删除可疑广告消息失败:", e);
   }
 
-  // 写广告/风控日志
+  // 写风控日志
   try {
     await saveAdLog(env, msg, score, reasons, text);
   } catch (e) {
     console.log("保存广告日志失败:", e);
   }
 
-  // 命中封禁阈值：自动封禁
+  // 分数达到封禁线：直接封禁
   if (score >= blockThreshold) {
     await env.TOPIC_MAP.put("banned:" + userId, "1");
+    await env.TOPIC_MAP.delete("riskverify:" + userId);
 
     const notifyText = [
       "🚫 自动封禁疑似广告用户",
@@ -1792,18 +1796,20 @@ const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
     return true;
   }
 
-  // 可疑但不确定：不转发，要求重新说明/验证
-  const riskKey = "riskhold:" + userId;
-  await env.TOPIC_MAP.put(riskKey, String(Date.now()), {
+  // 可疑但没到封禁线：不转发，强制二次验证
+  await env.TOPIC_MAP.put("riskverify:" + userId, String(Date.now()), {
     expirationTtl: 60 * 60 * 24
   });
+
+  // 删除已验证状态，让他必须重新验证
+  await env.TOPIC_MAP.delete("verified:" + userId);
 
   const warningText = [
     "⚠️ 系统检测到你的消息可能包含广告、推广、频道、链接、虚拟币、TRX 能量出租、博彩、贷款等内容。",
     "",
     "这条消息不会转发给对方。",
     "",
-    "如果你是真人，请重新发送一条正常咨询内容：",
+    "如果你是真人，请重新完成验证，并重新发送正常咨询内容：",
     "1. 不要带链接",
     "2. 不要带频道或 @ 推广",
     "3. 不要带 TRX / USDT / 能量出租 / 广告话术",
@@ -1821,8 +1827,15 @@ const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
     console.log("发送可疑提醒失败:", e);
   }
 
+  // 发送二次验证题
+  try {
+    await sendVerificationChallenge(userId, env, null);
+  } catch (e) {
+    console.log("发送二次验证失败:", e);
+  }
+
   const holdNotifyText = [
-    "⚠️ 可疑消息已拦截，暂未封禁",
+    "⚠️ 可疑消息已拦截，已触发二次验证",
     "",
     "模式: " + (isVerified ? "已验证用户普通检测" : "未验证用户严格检测"),
     "UID: " + userId,
@@ -1836,7 +1849,7 @@ const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
     "已执行：",
     "✅ 删除私聊可疑消息",
     "✅ 未转发到用户话题",
-    "✅ 已要求用户重新说明来意",
+    "✅ 已要求用户二次验证",
     "✅ 已记录日志",
     "",
     "内容：",
@@ -1850,31 +1863,8 @@ const suspiciousThreshold = readThreshold(env.AD_SUSPICIOUS_THRESHOLD, 2);
 
   return true;
 }
- 
- 
-async function handleAdLogsCommand(env, threadId) {
-  const list = await env.TOPIC_MAP.list({
-    prefix: "adlog:",
-    limit: 100
-  });
-
-  const keys = list.keys
-    .map(function(k) {
-      return k.name;
-    })
-    .sort()
-    .reverse()
-    .slice(0, 10);
-
-  if (keys.length === 0) {
-    await tgCall(env, "sendMessage", {
-      chat_id: env.SUPERGROUP_ID,
-      message_thread_id: threadId,
-      text: "暂无广告拦截记录。"
-    });
-    return;
-  }
-
+  
+  
   const logs = [];
 
   for (const key of keys) {
