@@ -724,8 +724,7 @@ if (normalizeCommandText(text) === "/adlogs") {
 }
     // 添加 Hard Rule
 if (text.startsWith("/addrule ")) {
-  const rule = text.substring(10).trim();
-
+ const rule = text.slice("/addrule ".length).trim();
   if (!rule) {
     await tgCall(env, "sendMessage", {
       chat_id: msg.chat.id,
