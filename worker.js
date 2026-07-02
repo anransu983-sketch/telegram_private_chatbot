@@ -1549,7 +1549,25 @@ const QUICK_REPLIES = {
   "/r4": "收到，我晚点回复你。",
   "/r5": "请直接说明你的需求、预算、时间要求和联系方式。"
 };
+async function loadHardRules(env) {
+  const result = await env.TOPIC_MAP.list({
+    prefix: "hardrule:"
+  });
 
+  return result.keys.map(item =>
+    item.name.substring("hardrule:".length)
+  );
+}
+
+async function loadSoftRules(env) {
+  const result = await env.TOPIC_MAP.list({
+    prefix: "softrule:"
+  });
+
+  return result.keys.map(item =>
+    item.name.substring("softrule:".length)
+  );
+}
 function normalizeCommandText(text) {
   return (text || "").trim().split(/\s+/)[0].split("@")[0];
 }
