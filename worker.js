@@ -722,6 +722,29 @@ if (normalizeCommandText(text) === "/adlogs") {
   await handleAdLogsCommand(env, threadId);
   return;
 }
+    // 添加 Hard Rule
+if (text.startsWith("/addrule ")) {
+  const rule = text.substring(10).trim();
+
+  if (!rule) {
+    await tgCall(env, "sendMessage", {
+      chat_id: msg.chat.id,
+      message_thread_id: threadId,
+      text: "用法：/addrule 关键词"
+    });
+    return;
+  }
+
+  await env.TOPIC_MAP.put("hardrule:" + rule, "1");
+
+  await tgCall(env, "sendMessage", {
+    chat_id: msg.chat.id,
+    message_thread_id: threadId,
+    text: "✅ 已添加 Hard Rule：\n" + rule
+  });
+
+  return;
+}
   // 优先通过 thread 映射快速反查用户，缺失时再降级全量扫描
   let userId = null;
   const mappedUser = await env.TOPIC_MAP.get(`thread:${threadId}`);
