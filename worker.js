@@ -1726,7 +1726,7 @@ async function saveAdLog(env, msg, score, reasons, text) {
 async function blockIfAd(msg, env, verified) {
   const userId = msg.chat.id;
   const text = getPlainText(msg);
-  const result = calcAdScore(msg);
+  const result = await calcAdScore(msg, env);
   const score = Number(result.score || 0);
   const reasons = result.reasons || [];
 
