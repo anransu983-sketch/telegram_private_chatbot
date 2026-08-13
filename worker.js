@@ -1820,7 +1820,7 @@ async function blockIfAd(msg, env, verified) {
       "✅ 已记录广告日志",
       "",
       "内容：",
-      contentText,
+      "(已自动折叠隐藏垃圾信息 🙈)",
       "",
       "如误封：",
       "1. 如果有用户话题，在话题里发 /unban",
@@ -1893,7 +1893,7 @@ async function blockIfAd(msg, env, verified) {
     "✅ 已记录日志",
     "",
     "内容：",
-    contentText
+   "(已自动折叠隐藏可疑信息 🙈)"
   ].join("\n");
 
   await tgCall(env, "sendMessage", {
