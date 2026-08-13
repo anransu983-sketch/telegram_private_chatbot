@@ -1013,7 +1013,7 @@ async function handleCallbackQuery(query, env, ctx) {
                 parse_mode: "Markdown"
             });
 
-            const hasPending = (Array.isArray(state.pending_ids) && state.pending_ids.length > 0) || !!state.pending;
+            const hasPending = false; // 强制关闭自动转发待办消息，修复广告绕过漏洞
             if (hasPending) {
                 try {
                     let pendingIds = [];
