@@ -29,24 +29,19 @@ const topicCreateInFlight = new Map();
 const adminStatusCache = new Map();
 
 // --- 本地题库 (15条) ---
+// --- 本地题库 (硬核哲学/逻辑学防脚本专用) ---
 const LOCAL_QUESTIONS = [
-    {"question": "冰融化后会变成什么？", "correct_answer": "水", "incorrect_answers": ["石头", "木头", "火"]},
-    {"question": "正常人有几只眼睛？", "correct_answer": "2", "incorrect_answers": ["1", "3", "4"]},
-    {"question": "以下哪个属于水果？", "correct_answer": "香蕉", "incorrect_answers": ["白菜", "猪肉", "大米"]},
-    {"question": "1 加 2 等于几？", "correct_answer": "3", "incorrect_answers": ["2", "4", "5"]},
-    {"question": "5 减 2 等于几？", "correct_answer": "3", "incorrect_answers": ["1", "2", "4"]},
-    {"question": "2 乘以 3 等于几？", "correct_answer": "6", "incorrect_answers": ["4", "5", "7"]},
-    {"question": "10 加 5 等于几？", "correct_answer": "15", "incorrect_answers": ["10", "12", "20"]},
-    {"question": "8 减 4 等于几？", "correct_answer": "4", "incorrect_answers": ["2", "3", "5"]},
-    {"question": "在天上飞的交通工具是什么？", "correct_answer": "飞机", "incorrect_answers": ["汽车", "轮船", "自行车"]},
-    {"question": "星期一的后面是星期几？", "correct_answer": "星期二", "incorrect_answers": ["星期日", "星期五", "星期三"]},
-    {"question": "鱼通常生活在哪里？", "correct_answer": "水里", "incorrect_answers": ["树上", "土里", "火里"]},
-    {"question": "我们用什么器官来听声音？", "correct_answer": "耳朵", "incorrect_answers": ["眼睛", "鼻子", "嘴巴"]},
-    {"question": "晴朗的天空通常是什么颜色的？", "correct_answer": "蓝色", "incorrect_answers": ["绿色", "红色", "紫色"]},
-    {"question": "太阳从哪个方向升起？", "correct_answer": "东方", "incorrect_answers": ["西方", "南方", "北方"]},
-    {"question": "小狗发出的叫声通常是？", "correct_answer": "汪汪", "incorrect_answers": ["喵喵", "咩咩", "呱呱"]}
+    {"question": "赫拉克利特说“人不能两次踏进同一条河流”，主要强调的是什么哲学观点？", "correct_answer": "事物是绝对运动的", "incorrect_answers": ["河水流速太快", "时间是相对静止的", "水质污染严重"]},
+    {"question": "庄周梦蝶探讨的核心哲学问题是什么？", "correct_answer": "真实与虚幻的界限", "incorrect_answers": ["蝴蝶的生物学寿命", "睡眠质量与梦境", "古代道家的环保观"]},
+    {"question": "著名的思想实验“薛定谔的猫”主要用于说明量子力学中的什么概念？", "correct_answer": "量子叠加态", "incorrect_answers": ["经典力学定律", "动物生理极限", "相对论效应"]},
+    {"question": "罗尔斯在《正义论》中提出“无知之幕”的思想实验，其目的是为了确保什么？", "correct_answer": "制定规则的绝对公平", "incorrect_answers": ["保护个人隐私不泄露", "遮挡视线以保持专注", "减少社会犯罪率"]},
+    {"question": "“白马非马”是古代哪位名家（逻辑学家）提出的著名诡辩命题？", "correct_answer": "公孙龙", "incorrect_answers": ["孔子", "老子", "韩非子"]},
+    {"question": "尼采的名言“上帝已死”通常被哲学界理解为代表了何种思潮的兴起？", "correct_answer": "虚无主义的危机", "incorrect_answers": ["宗教信仰的复兴", "达尔文进化论", "唯物主义的普及"]},
+    {"question": "在博弈论的“囚徒困境”中，两个完全理性的自私囚徒通常最终会做出何种选择？", "correct_answer": "互相背叛", "incorrect_answers": ["互相合作", "保持绝对沉默", "无条件相信对方"]},
+    {"question": "笛卡尔的名言“我思故我在”确立了什么在近代西方哲学中的基础地位？", "correct_answer": "理性主体的存在", "incorrect_answers": ["物质世界的客观性", "宗教神学的权威", "经验感觉的可靠性"]},
+    {"question": "康德哲学中，将人类无法通过感官经验认识的、隐藏在现象背后的客观存在称为什么？", "correct_answer": "物自体", "incorrect_answers": ["现象界", "绝对理念", "先验幻相"]},
+    {"question": "根据“墨菲定律”，如果一件事情有变坏的可能，那么它最终会怎样？", "correct_answer": "总会发生", "incorrect_answers": ["绝对不会发生", "可以通过祈祷避免", "概率会逐渐降低"]}
 ];
-
 // --- 辅助工具函数 ---
 const Logger = {
     info(action, data = {}) { console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: 'INFO', action, ...data })); },
