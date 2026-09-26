@@ -839,16 +839,7 @@ async function blockIfAd(msg, env, verified) {
     if (score >= blockThreshold) {
         await env.TOPIC_MAP.put("banned:" + userId, "1");
         await env.TOPIC_MAP.delete("riskverify:" + userId);
-        const notifyText = [
-            "🚫 自动封禁疑似黑灰产/广告用户", "",
-            "UID: " + userId, "用户名: " + username, "昵称: " + name, "资料特征: " + profile,
-            "广告分: " + score + " (触发终极规则)", "命中原因: " + reasonText, "",
-            "已执行：", "✅ 自动封禁", "✅ 自动删除私聊消息", "✅ 已记录拦截日志", "",
-            "内容：", "(已自动折叠隐藏垃圾信息 🙈)", "",
-            "如误封：", "1. 如果有用户话题，在话题里发 /unban 并 /trust",
-            "2. 如果没有话题，去 Cloudflare KV 删除： banned:" + userId
-        ].join("\n");
-        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, text: notifyText });
+        // 群内长篇通知已被屏蔽
         return true;
     }
 
@@ -859,13 +850,7 @@ async function blockIfAd(msg, env, verified) {
     try { await tgCall(env, "sendMessage", { chat_id: userId, text: warningText }); } catch (e) {}
     try { await sendVerificationChallenge(userId, env, null); } catch (e) {}
 
-    const holdNotifyText = [
-        "⚠️ 可疑消息已拦截，已触发二次验证", "",
-        "UID: " + userId, "命中原因: " + reasonText, "",
-        "已执行：", "✅ 删除私聊可疑消息", "✅ 未转发到用户话题", "✅ 已要求用户二次验证", "",
-        "内容：", "(已自动折叠隐藏可疑信息 🙈)"
-    ].join("\n");
-    await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, text: holdNotifyText });
+    // 群内二次验证通知已被屏蔽
     return true;
 }
 
