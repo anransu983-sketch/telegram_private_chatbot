@@ -248,14 +248,17 @@ async function handlePrivateMessage(msg, env, ctx) {
 
     const rateLimit = await checkRateLimit(userId, env, 'message', CONFIG.RATE_LIMIT_MESSAGE, CONFIG.RATE_LIMIT_WINDOW);
     if (!rateLimit.allowed) { await tgCall(env, "sendMessage", { chat_id: userId, text: "⚠️ 发送过于频繁，请稍后再试。" }); return; }
-    if (msg.text && msg.text.startsWith("/") && msg.text.trim() !== "/start") return;
+    const _t = (msg.text || "").trim();
+    if (normalizeCommandText(_t) === "/manner") { await tgCall(env, "sendMessage", { chat_id: userId, text: VISITOR_HELP }); return; }
+    if (msg.text && msg.text.startsWith("/") && _t !== "/start") return;
 
     const isBanned = await env.TOPIC_MAP.get(`banned:${userId}`);
     if (isBanned) return;
 
     const verified = await env.TOPIC_MAP.get(`verified:${userId}`);
     if (verified !== "trusted" && await blockIfAd(msg, env, verified)) return;
-    if (!verified) {
+    const verifyOn = (await env.TOPIC_MAP.get("cfg:verify")) !== "0"; // 缺省开启
+    if (verifyOn && !verified) {
         const isStart = msg.text && msg.text.trim() === "/start";
         const pendingMsgId = isStart ? null : msg.message_id;
         await sendVerificationChallenge(userId, env, pendingMsgId);
@@ -266,7 +269,8 @@ async function handlePrivateMessage(msg, env, ctx) {
 
 async function forwardToTopic(msg, userId, key, env, ctx) {
     const needsVerify = await env.TOPIC_MAP.get(`needs_verify:${userId}`);
-    if (needsVerify) { await sendVerificationChallenge(userId, env, msg.message_id || null); return; }
+    const verifyOn2 = (await env.TOPIC_MAP.get("cfg:verify")) !== "0";
+    if (verifyOn2 && needsVerify) { await sendVerificationChallenge(userId, env, msg.message_id || null); return; }
 
     let rec = await safeGetJSON(env, key, null);
     if (rec && rec.closed) { await tgCall(env, "sendMessage", { chat_id: userId, text: "🚫 当前对话已被管理员关闭。" }); return; }
@@ -353,6 +357,31 @@ async function handleAdminReply(msg, env, ctx) {
 
     if (text === "/cleanup") { ctx.waitUntil(handleCleanupCommand(threadId, env)); return; }
     if (normalizeCommandText(text) === "/adlogs") { await handleAdLogsCommand(env, threadId); return; }
+
+    if (normalizeCommandText(text) === "/manner") { await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: msg.chat.id, text: ADMIN_HELP }, threadId)); return; }
+
+    if (normalizeCommandText(text) === "/set" || text.startsWith("/set ")) {
+        const FEATURES = { verify: "人机验证", adblock: "广告拦截" };
+        const args = text.trim().split(/\s+/).slice(1);
+        const replySet = (t) => tgCall(env, "sendMessage", withMessageThreadId({ chat_id: msg.chat.id, text: t }, threadId));
+        if (args.length === 0) {
+            const lines = [];
+            for (const k of Object.keys(FEATURES)) {
+                const on = (await env.TOPIC_MAP.get("cfg:" + k)) !== "0";
+                lines.push((on ? "✅ 开启" : "❌ 关闭") + " " + FEATURES[k] + " (" + k + ")");
+            }
+            await replySet("⚙️ 功能开关状态\n" + lines.join("\n") + "\n\n用法：/set <verify|adblock> <on|off>\n例如：/set verify off");
+            return;
+        }
+        const feat = args[0], val = args[1];
+        if (!FEATURES[feat] || (val !== "on" && val !== "off")) {
+            await replySet("用法：/set <verify|adblock> <on|off>\n例如：/set adblock off");
+            return;
+        }
+        await env.TOPIC_MAP.put("cfg:" + feat, val === "on" ? "1" : "0");
+        await replySet((val === "on" ? "✅ 已开启" : "❌ 已关闭") + FEATURES[feat]);
+        return;
+    }
     if (text.startsWith("/addrule ")) {
         const rule = text.slice("/addrule ".length).trim();
         if (!rule) { await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "用法：/addrule 关键词" }); return; }
@@ -758,6 +787,35 @@ const QUICK_REPLIES = {
 function normalizeCommandText(text) { return (text || "").trim().split(/\s+/)[0].split("@")[0]; }
 function getQuickReply(text) { const cmd = normalizeCommandText(text); return QUICK_REPLIES[cmd] || null; }
 
+const VISITOR_HELP = `🤖 使用说明
+
+1. 直接发送你的问题，文字、图片、文件都可以
+2. 首次使用需要完成一道人机验证
+3. 验证通过后请重新发送你的消息，管理员会尽快回复
+
+⚠️ 禁止发送广告、链接、色情、博彩、贷款等内容，违者直接拉黑。
+💡 发送 /manner 可随时查看本说明`;
+
+const ADMIN_HELP = `🛠️ 管理员命令一览
+
+👤 用户管理
+/ban 封禁 · /unban 解封 · /trust 永久信任
+/reset 重置验证 · /info 用户信息
+/close 关单 · /open 重开对话
+
+🛡️ 规则管理
+/addrule 关键词 · /delrule 关键词
+/listrules 查看规则 · /adlogs 拦截记录
+
+⚡ 快捷回复 /r1 ~ /r5
+
+⚙️ 功能开关
+/set 查看状态
+/set verify on|off（人机验证）
+/set adblock on|off（广告拦截）
+
+🧹 /cleanup 清理已删话题的用户数据`;
+
 // 自定义 Hard Rule 缓存（60 秒），/addrule 添加的关键词存在 KV "hardrule:" 前缀下
 let hardRulesCache = { ts: 0, rules: [] };
 async function getHardRules(env) {
@@ -854,6 +912,8 @@ async function saveAdLog(env, msg, score, reasons, text) {
 
 async function blockIfAd(msg, env, verified) {
     const userId = msg.chat.id;
+    const adblockOn = (await env.TOPIC_MAP.get("cfg:adblock")) !== "0"; // 缺省开启
+    if (!adblockOn) return false;
     const text = getPlainText(msg);
     const result = await calcAdScore(msg, env);
     const score = Number(result.score || 0);
