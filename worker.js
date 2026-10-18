@@ -468,6 +468,7 @@ async function handleAdminReply(msg, env, ctx) {
 
     if (text === "/unban") {
         await env.TOPIC_MAP.delete(`banned:${userId}`);
+        await env.TOPIC_MAP.delete(`strikes:${userId}`);
         await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "✅ *用户已解封*", parse_mode: "Markdown" });
         return;
     }
@@ -1023,6 +1024,19 @@ async function blockIfAd(msg, env, verified) {
     try { await tgCall(env, "deleteMessage", { chat_id: msg.chat.id, message_id: msg.message_id }); } catch (e) {}
     try { await saveAdLog(env, msg, score, reasons, text); } catch (e) {}
 
+    // 累计警告：30 天内第二次触发警告线直接拉黑（防"警告→重验证→再警告"循环）
+    let strikes = 0;
+    try { strikes = parseInt(await env.TOPIC_MAP.get("strikes:" + userId), 10) || 0; } catch (e) {}
+    if (score < blockThreshold && strikes + 1 >= 2) {
+        try { await env.TOPIC_MAP.delete("strikes:" + userId); } catch (e) {}
+        await env.TOPIC_MAP.put("banned:" + userId, "1");
+        await env.TOPIC_MAP.delete("riskverify:" + userId);
+        await env.TOPIC_MAP.delete("verified:" + userId);
+        try { await saveAdLog(env, msg, score, [...reasons, "累计两次警告"], text); } catch (e) {}
+        return true;
+    }
+    try { await env.TOPIC_MAP.put("strikes:" + userId, String(strikes + 1), { expirationTtl: 30 * 86400 }); } catch (e) {}
+
     if (score >= blockThreshold) {
         await env.TOPIC_MAP.put("banned:" + userId, "1");
         await saveSpamCorpus(env, text);
@@ -1034,7 +1048,7 @@ async function blockIfAd(msg, env, verified) {
     await env.TOPIC_MAP.put("riskverify:" + userId, String(Date.now()), { expirationTtl: 60 * 60 * 24 });
     await env.TOPIC_MAP.delete("verified:" + userId);
 
-    const warningText = "⚠️ 系统检测到高危发言，消息已被拦截。\n\n如果您是正常咨询，请勿发送链接、广告或敏感词汇。请重新验证。";
+    const warningText = "⚠️ 系统检测到高危发言，消息已被拦截。\n\n如果您是正常咨询，请勿发送链接、广告或敏感词汇。请重新验证。（30 天内累计两次将被拉黑）";
     try { await tgCall(env, "sendMessage", { chat_id: userId, text: warningText }); } catch (e) {}
     try { await sendVerificationChallenge(userId, env, null); } catch (e) {}
 
