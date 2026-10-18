@@ -380,7 +380,7 @@ async function handleAdminReply(msg, env, ctx) {
             rec.closed = true;
             await env.TOPIC_MAP.put(key, JSON.stringify(rec));
             await tgCall(env, "closeForumTopic", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId });
-            await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🚫 **对话已强制关闭**", parse_mode: "Markdown" });
+            await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🚫 *对话已强制关闭*", parse_mode: "Markdown" });
         }
         return;
     }
@@ -392,33 +392,33 @@ async function handleAdminReply(msg, env, ctx) {
             rec.closed = false;
             await env.TOPIC_MAP.put(key, JSON.stringify(rec));
             await tgCall(env, "reopenForumTopic", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId });
-            await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "✅ **对话已恢复**", parse_mode: "Markdown" });
+            await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "✅ *对话已恢复*", parse_mode: "Markdown" });
         }
         return;
     }
 
     if (text === "/reset") {
         await env.TOPIC_MAP.delete(`verified:${userId}`);
-        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🔄 **验证重置**", parse_mode: "Markdown" });
+        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🔄 *验证重置*", parse_mode: "Markdown" });
         return;
     }
 
     if (text === "/trust") {
         await env.TOPIC_MAP.put(`verified:${userId}`, "trusted");
         await env.TOPIC_MAP.delete(`needs_verify:${userId}`);
-        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🌟 **已设置永久信任**", parse_mode: "Markdown" });
+        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🌟 *已设置永久信任*", parse_mode: "Markdown" });
         return;
     }
 
     if (text === "/ban") {
         await env.TOPIC_MAP.put(`banned:${userId}`, "1");
-        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🚫 **用户已封禁**", parse_mode: "Markdown" });
+        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "🚫 *用户已封禁*", parse_mode: "Markdown" });
         return;
     }
 
     if (text === "/unban") {
         await env.TOPIC_MAP.delete(`banned:${userId}`);
-        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "✅ **用户已解封**", parse_mode: "Markdown" });
+        await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: "✅ *用户已解封*", parse_mode: "Markdown" });
         return;
     }
 
@@ -427,10 +427,13 @@ async function handleAdminReply(msg, env, ctx) {
         const userRec = await safeGetJSON(env, userKey, null);
         const verifyStatus = await env.TOPIC_MAP.get(`verified:${userId}`);
         const banStatus = await env.TOPIC_MAP.get(`banned:${userId}`);
-        const info = `👤 **用户信息**\nUID: \`${userId}\`\nTopic ID: \`${threadId}\`\n话题标题: ${userRec?.title || "未知"}\n验证状态: ${verifyStatus ? (verifyStatus === 'trusted' ? '🌟 永久信任' : '✅ 已验证') : '❌ 未验证'}\n封禁状态: ${banStatus ? '🚫 已封禁' : '✅ 正常'}\nLink: [点击私聊](tg://user?id=${userId})`;
+        const info = `👤 *用户信息*\nUID: \`${userId}\`\nTopic ID: \`${threadId}\`\n话题标题: ${userRec?.title || "未知"}\n验证状态: ${verifyStatus ? (verifyStatus === 'trusted' ? '🌟 永久信任' : '✅ 已验证') : '❌ 未验证'}\n封禁状态: ${banStatus ? '🚫 已封禁' : '✅ 正常'}\nLink: [点击私聊](tg://user?id=${userId})`;
         await tgCall(env, "sendMessage", { chat_id: env.SUPERGROUP_ID, message_thread_id: threadId, text: info, parse_mode: "Markdown" });
         return;
     }
+
+    const quickReply = getQuickReply(text);
+    if (quickReply) { await tgCall(env, "sendMessage", { chat_id: userId, text: quickReply }); return; }
 
     if (msg.media_group_id) { await handleMediaGroup(msg, env, ctx, { direction: "t2p", targetChat: userId, threadId: undefined }); return; }
     await tgCall(env, "copyMessage", { chat_id: userId, from_chat_id: env.SUPERGROUP_ID, message_id: msg.message_id });
@@ -475,7 +478,7 @@ async function sendVerificationChallenge(userId, env, pendingMsgId) {
     const buttons = challenge.options.map((opt, idx) => ({ text: opt, callback_data: `verify:${verifyId}:${idx}` }));
     const keyboard = [];
     for (let i = 0; i < buttons.length; i += CONFIG.BUTTON_COLUMNS) { keyboard.push(buttons.slice(i, i + CONFIG.BUTTON_COLUMNS)); }
-    await tgCall(env, "sendMessage", { chat_id: userId, text: `🛡️ **人机验证**\n\n${challenge.question}\n\n请点击下方按钮回答 (回答正确后将自动发送您刚才的消息)。`, parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
+    await tgCall(env, "sendMessage", { chat_id: userId, text: `🛡️ *人机验证*\n\n${challenge.question}\n\n请点击下方按钮回答（验证通过后请重新发送您的消息）。`, parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
 
 async function handleCallbackQuery(query, env, ctx) {
@@ -507,7 +510,7 @@ async function handleCallbackQuery(query, env, ctx) {
             await env.TOPIC_MAP.delete(`chal:${verifyId}`);
             await env.TOPIC_MAP.delete(`user_challenge:${userId}`);
 
-            await tgCall(env, "editMessageText", { chat_id: userId, message_id: query.message.message_id, text: "✅ **验证成功**\n\n您现在可以自由对话了。", parse_mode: "Markdown" });
+            await tgCall(env, "editMessageText", { chat_id: userId, message_id: query.message.message_id, text: "✅ *验证成功*\n\n您现在可以自由对话了。", parse_mode: "Markdown" });
 
             // 【核心安全修复】强制关闭待办消息自动转发，彻底封杀广告脚本漏洞
             const hasPending = false; 
@@ -547,10 +550,10 @@ async function handleCallbackQuery(query, env, ctx) {
 async function handleCleanupCommand(threadId, env) {
     const lockKey = "cleanup:lock";
     const locked = await env.TOPIC_MAP.get(lockKey);
-    if (locked) { await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: "⏳ **已有清理任务正在运行，请稍后再试。**", parse_mode: "Markdown" }, threadId)); return; }
+    if (locked) { await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: "⏳ *已有清理任务正在运行，请稍后再试。*", parse_mode: "Markdown" }, threadId)); return; }
 
     await env.TOPIC_MAP.put(lockKey, "1", { expirationTtl: CONFIG.CLEANUP_LOCK_TTL_SECONDS });
-    await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: "🔄 **正在扫描需要清理的用户...**", parse_mode: "Markdown" }, threadId));
+    await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: "🔄 *正在扫描需要清理的用户...*", parse_mode: "Markdown" }, threadId));
 
     let cleanedCount = 0; let errorCount = 0; const cleanedUsers = []; let scannedCount = 0;
     try {
@@ -590,16 +593,16 @@ async function handleCleanupCommand(threadId, env) {
             if (cursor) await new Promise(r => setTimeout(r, 200));
         } while (cursor);
 
-        let reportText = `✅ **清理完成**\n\n📊 **统计信息**\n- 扫描用户数: ${scannedCount}\n- 已清理用户数: ${cleanedCount}\n- 错误数: ${errorCount}\n\n`;
+        let reportText = `✅ *清理完成*\n\n📊 *统计信息*\n- 扫描用户数: ${scannedCount}\n- 已清理用户数: ${cleanedCount}\n- 错误数: ${errorCount}\n\n`;
         if (cleanedCount > 0) {
-            reportText += `🗑️ **已清理的用户** (话题已删除):\n`;
+            reportText += `🗑️ *已清理的用户* (话题已删除):\n`;
             for (const user of cleanedUsers.slice(0, CONFIG.MAX_CLEANUP_DISPLAY)) { reportText += `- UID: \`${user.userId}\` | 话题: ${user.title}\n`; }
             if (cleanedUsers.length > CONFIG.MAX_CLEANUP_DISPLAY) reportText += `\n...(还有 ${cleanedUsers.length - CONFIG.MAX_CLEANUP_DISPLAY} 个用户)\n`;
         } else { reportText += `✨ 没有发现需要清理的用户记录。`; }
         await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: reportText, parse_mode: "Markdown" }, threadId));
     } catch (e) {
         Logger.error('cleanup_failed', e, { threadId });
-        await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: `❌ **清理过程出错**\n\n错误信息: \`${e.message}\``, parse_mode: "Markdown" }, threadId));
+        await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: env.SUPERGROUP_ID, text: `❌ *清理过程出错*\n\n错误信息: \`${e.message}\``, parse_mode: "Markdown" }, threadId));
     } finally { await env.TOPIC_MAP.delete(lockKey); }
 }
 
@@ -734,6 +737,19 @@ const QUICK_REPLIES = {
 function normalizeCommandText(text) { return (text || "").trim().split(/\s+/)[0].split("@")[0]; }
 function getQuickReply(text) { const cmd = normalizeCommandText(text); return QUICK_REPLIES[cmd] || null; }
 
+// 自定义 Hard Rule 缓存（60 秒），/addrule 添加的关键词存在 KV "hardrule:" 前缀下
+let hardRulesCache = { ts: 0, rules: [] };
+async function getHardRules(env) {
+    const now = Date.now();
+    if (now - hardRulesCache.ts < 60000) return hardRulesCache.rules;
+    try {
+        const keys = await getAllKeys(env, "hardrule:");
+        const rules = keys.map(k => k.name.slice("hardrule:".length)).filter(Boolean);
+        hardRulesCache = { ts: now, rules };
+        return rules;
+    } catch (e) { return hardRulesCache.rules; }
+}
+
 // 【核武级防骚扰规则】
 const AD_RULES = [
   // 1. 终极暴杀：虚拟币/能量/资金盘 (无视加点、加空格伪装)
@@ -784,13 +800,20 @@ function scoreRiskyProfile(msg) {
     return { score, reasons: Array.from(new Set(reasons)) };
 }
 
-function calcAdScore(msg) {
+async function calcAdScore(msg, env) {
     const text = getPlainText(msg);
     let score = 0; const reasons = [];
     if (messageHasUrlEntity(msg)) { score += 5; reasons.push("终极：消息实体含链接/提及"); } // 强化链接惩罚
     for (const rule of AD_RULES) {
         if (rule.re.test(text)) { score += rule.score; reasons.push(rule.reason); }
     }
+    // 自定义 Hard Rule（/addrule 添加）：关键词命中直接 +5
+    try {
+        const hardRules = await getHardRules(env);
+        for (const rule of hardRules) {
+            if (rule && text.includes(rule)) { score += 5; reasons.push("自定义规则：" + rule); }
+        }
+    } catch (e) { Logger.warn('hardrule_check_failed', {}); }
     const profileRisk = scoreRiskyProfile(msg);
     score += profileRisk.score;
     reasons.push(...profileRisk.reasons);
