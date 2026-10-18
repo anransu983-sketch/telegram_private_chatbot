@@ -357,7 +357,28 @@ async function handleAdminReply(msg, env, ctx) {
         const rule = text.slice("/addrule ".length).trim();
         if (!rule) { await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "用法：/addrule 关键词" }); return; }
         await env.TOPIC_MAP.put("hardrule:" + rule, "1");
+        hardRulesCache = { ts: 0, rules: [] }; // 立即失效缓存，新规则马上生效
         await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "✅ 已添加 Hard Rule：\n" + rule });
+        return;
+    }
+
+    if (text.startsWith("/delrule ")) {
+        const rule = text.slice("/delrule ".length).trim();
+        if (!rule) { await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "用法：/delrule 关键词" }); return; }
+        await env.TOPIC_MAP.delete("hardrule:" + rule);
+        hardRulesCache = { ts: 0, rules: [] }; // 立即失效缓存
+        await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "🗑️ 已删除 Hard Rule：\n" + rule });
+        return;
+    }
+
+    if (normalizeCommandText(text) === "/listrules") {
+        let rules = [];
+        try { rules = (await getAllKeys(env, "hardrule:")).map(k => k.name.slice("hardrule:".length)).filter(Boolean); } catch (e) {}
+        if (rules.length === 0) { await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: "📋 暂无自定义 Hard Rule。" }); return; }
+        const MAX_SHOW = 50;
+        let listText = "📋 自定义 Hard Rule（共 " + rules.length + " 条）：\n" + rules.slice(0, MAX_SHOW).map((r, i) => (i + 1) + ". " + r).join("\n");
+        if (rules.length > MAX_SHOW) listText += "\n…还有 " + (rules.length - MAX_SHOW) + " 条";
+        await tgCall(env, "sendMessage", { chat_id: msg.chat.id, message_thread_id: threadId, text: listText.slice(0, 3500) });
         return;
     }
 
