@@ -945,10 +945,13 @@ function scoreRiskyProfile(msg) {
     return { score, reasons: Array.from(new Set(reasons)) };
 }
 
-async function calcAdScore(msg, env) {
+async function calcAdScore(msg, env, isVerified) {
     const text = getPlainText(msg);
     let score = 0; const reasons = [];
-    if (messageHasUrlEntity(msg)) { score += 5; reasons.push("终极：消息实体含链接/提及"); } // 强化链接惩罚
+    if (messageHasUrlEntity(msg)) {
+        if (isVerified) { score += 2; reasons.push("消息含链接（已验证用户，降级为警告）"); }
+        else { score += 5; reasons.push("终极：消息实体含链接/提及"); }
+    } // 已验证用户发链接只警告+重新验证，不拉黑
     for (const rule of AD_RULES) {
         if (rule.re.test(text)) { score += rule.score; reasons.push(rule.reason); }
     }
@@ -993,7 +996,7 @@ async function blockIfAd(msg, env, verified) {
     const adblockOn = (await env.TOPIC_MAP.get("cfg:adblock")) !== "0"; // 缺省开启
     if (!adblockOn) return false;
     const text = getPlainText(msg);
-    const result = await calcAdScore(msg, env);
+    const result = await calcAdScore(msg, env, !!verified);
     let score = Number(result.score || 0);
     const reasons = result.reasons || [];
     const casOn = (await env.TOPIC_MAP.get("cfg:cas")) !== "0"; // 缺省开启
