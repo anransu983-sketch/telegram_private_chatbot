@@ -361,7 +361,7 @@ async function handleAdminReply(msg, env, ctx) {
     if (normalizeCommandText(text) === "/manner") { await tgCall(env, "sendMessage", withMessageThreadId({ chat_id: msg.chat.id, text: ADMIN_HELP }, threadId)); return; }
 
     if (normalizeCommandText(text) === "/set" || text.startsWith("/set ")) {
-        const FEATURES = { verify: "人机验证", adblock: "广告拦截" };
+        const FEATURES = { verify: "人机验证", adblock: "广告拦截", cas: "CAS 联邦封禁" };
         const args = text.trim().split(/\s+/).slice(1);
         const replySet = (t) => tgCall(env, "sendMessage", withMessageThreadId({ chat_id: msg.chat.id, text: t }, threadId));
         if (args.length === 0) {
@@ -370,12 +370,12 @@ async function handleAdminReply(msg, env, ctx) {
                 const on = (await env.TOPIC_MAP.get("cfg:" + k)) !== "0";
                 lines.push((on ? "✅ 开启" : "❌ 关闭") + " " + FEATURES[k] + " (" + k + ")");
             }
-            await replySet("⚙️ 功能开关状态\n" + lines.join("\n") + "\n\n用法：/set <verify|adblock> <on|off>\n例如：/set verify off");
+            await replySet("⚙️ 功能开关状态\n" + lines.join("\n") + "\n\n用法：/set <verify|adblock|cas> <on|off>\n例如：/set verify off");
             return;
         }
         const feat = args[0], val = args[1];
         if (!FEATURES[feat] || (val !== "on" && val !== "off")) {
-            await replySet("用法：/set <verify|adblock> <on|off>\n例如：/set adblock off");
+            await replySet("用法：/set <verify|adblock|cas> <on|off>\n例如：/set adblock off");
             return;
         }
         await env.TOPIC_MAP.put("cfg:" + feat, val === "on" ? "1" : "0");
@@ -813,6 +813,7 @@ const ADMIN_HELP = `🛠️ 管理员命令一览
 /set 查看状态
 /set verify on|off（人机验证）
 /set adblock on|off（广告拦截）
+/set cas on|off（CAS 联邦封禁）
 
 🧹 /cleanup 清理已删话题的用户数据`;
 
@@ -827,6 +828,71 @@ async function getHardRules(env) {
         hardRulesCache = { ts: now, rules };
         return rules;
     } catch (e) { return hardRulesCache.rules; }
+}
+
+// 广告语料库：拦截过的广告归一化存档，用于相似度比对（KV "spamcorpus:" 前缀，30 天过期）
+let spamCorpusCache = { ts: 0, samples: [] };
+function normalizeSpamText(text) {
+    return (text || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+function bigramsOf(str) {
+    const set = new Set();
+    for (let i = 0; i < str.length - 1; i++) set.add(str.slice(i, i + 2));
+    return set;
+}
+function bigramSimilarity(a, b) {
+    if (a.size === 0 || b.size === 0) return 0;
+    let inter = 0;
+    for (const x of a) if (b.has(x)) inter++;
+    return inter / (a.size + b.size - inter);
+}
+async function getSpamCorpus(env) {
+    const now = Date.now();
+    if (now - spamCorpusCache.ts < 60000) return spamCorpusCache.samples;
+    try {
+        const keys = await getAllKeys(env, "spamcorpus:");
+        const vals = await Promise.all(keys.slice(0, 150).map(k => env.TOPIC_MAP.get(k.name).catch(() => null)));
+        const samples = vals.filter(v => typeof v === "string" && v.length >= 8);
+        spamCorpusCache = { ts: now, samples };
+        return samples;
+    } catch (e) { return spamCorpusCache.samples; }
+}
+async function saveSpamCorpus(env, text) {
+    try {
+        const norm = normalizeSpamText(text).slice(0, 500);
+        if (norm.length < 8) return;
+        await env.TOPIC_MAP.put("spamcorpus:" + Date.now() + ":" + Math.floor(Math.random() * 1e6), norm, { expirationTtl: 2592000 });
+        const keys = await getAllKeys(env, "spamcorpus:");
+        if (keys.length > 200) {
+            const del = keys.map(k => k.name).sort().slice(0, keys.length - 200);
+            await Promise.all(del.map(n => env.TOPIC_MAP.delete(n).catch(() => null)));
+        }
+        spamCorpusCache.ts = 0; // 立即失效缓存，下次重读
+    } catch (e) {}
+}
+
+// CAS 联邦封禁检查（Combot 公开黑名单）：结果缓存 24 小时，查不到或异常时放行不误伤
+async function isCasBanned(env, userId) {
+    const kvKey = "cas:" + userId;
+    try {
+        const cached = await env.TOPIC_MAP.get(kvKey);
+        if (cached === "1") return true;
+        if (cached === "0") return false;
+    } catch (e) {}
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        let data = null;
+        try {
+            const resp = await fetch("https://api.cas.chat/check?user_id=" + encodeURIComponent(String(userId)), { signal: controller.signal });
+            data = await resp.json();
+        } finally { clearTimeout(timer); }
+        const banned = !!(data && data.ok === true);
+        try { await env.TOPIC_MAP.put(kvKey, banned ? "1" : "0", { expirationTtl: 86400 }); } catch (e) {}
+        return banned;
+    } catch (e) {
+        return false;
+    }
 }
 
 // 【核武级防骚扰规则】
@@ -893,6 +959,18 @@ async function calcAdScore(msg, env) {
             if (rule && text.includes(rule)) { score += 5; reasons.push("自定义规则：" + rule); }
         }
     } catch (e) { Logger.warn('hardrule_check_failed', {}); }
+    // 相似广告：与语料库中已知广告相似度 >= 0.75 直接命中（归一化后比对，防加空格/标点伪装）
+    try {
+        const norm = normalizeSpamText(text);
+        if (norm.length >= 8) {
+            const corpus = await getSpamCorpus(env);
+            const bg = bigramsOf(norm);
+            for (const sample of corpus) {
+                if (Math.abs(sample.length - norm.length) > Math.max(norm.length, sample.length) * 0.6) continue;
+                if (bigramSimilarity(bg, bigramsOf(sample)) >= 0.75) { score += 5; reasons.push("与已知广告相似"); break; }
+            }
+        }
+    } catch (e) {}
     const profileRisk = scoreRiskyProfile(msg);
     score += profileRisk.score;
     reasons.push(...profileRisk.reasons);
@@ -916,8 +994,10 @@ async function blockIfAd(msg, env, verified) {
     if (!adblockOn) return false;
     const text = getPlainText(msg);
     const result = await calcAdScore(msg, env);
-    const score = Number(result.score || 0);
+    let score = Number(result.score || 0);
     const reasons = result.reasons || [];
+    const casOn = (await env.TOPIC_MAP.get("cfg:cas")) !== "0"; // 缺省开启
+    if (casOn && await isCasBanned(env, userId)) { score += 5; reasons.push("CAS 联邦封禁名单"); }
 
     if (!Number.isFinite(score) || score <= 0) return false;
 
@@ -942,6 +1022,7 @@ async function blockIfAd(msg, env, verified) {
 
     if (score >= blockThreshold) {
         await env.TOPIC_MAP.put("banned:" + userId, "1");
+        await saveSpamCorpus(env, text);
         await env.TOPIC_MAP.delete("riskverify:" + userId);
         // 群内长篇通知已被屏蔽
         return true;
